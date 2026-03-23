@@ -3,8 +3,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Solana Wallet Trade Dashboard",
-  description: "Track swap activity and holdings for a specific Solana wallet.",
+  title: "Wallet Tracker",
+  description:
+    "Pink, image-first Solana wallet dashboard with neon visuals, allocation charts, and compact swap cards.",
 };
 
 export default function RootLayout({

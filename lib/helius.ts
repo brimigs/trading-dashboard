@@ -15,10 +15,14 @@ const KNOWN_MINTS: Record<
   So11111111111111111111111111111111111111111: {
     symbol: "SOL",
     name: "Solana",
+    logoUri:
+      "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111111/logo.png",
   },
   So11111111111111111111111111111111111111112: {
     symbol: "SOL",
     name: "Solana",
+    logoUri:
+      "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111111/logo.png",
   },
   EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: {
     symbol: "USDC",
@@ -83,6 +87,12 @@ type EnhancedTransaction = {
   accountData?: AccountData[];
 };
 
+type TokenMetadata = {
+  symbol: string;
+  name: string;
+  logoUri?: string | null;
+};
+
 function assertConfig() {
   if (!HELIUS_API_KEY) {
     throw new Error("Missing HELIUS_API_KEY");
@@ -97,9 +107,12 @@ function canonicalizeMint(mint: string) {
   return mint;
 }
 
-function lookupToken(mint: string) {
+function lookupToken(
+  mint: string,
+  tokenMetadata?: Map<string, TokenMetadata>,
+) {
   const canonicalMint = canonicalizeMint(mint);
-  const known = KNOWN_MINTS[canonicalMint];
+  const known = tokenMetadata?.get(canonicalMint) ?? KNOWN_MINTS[canonicalMint];
 
   return {
     mint: canonicalMint,
@@ -190,12 +203,15 @@ function addAmount(
   target.set(canonicalMint, previous + amount);
 }
 
-function mapToLegs(amounts: Map<string, number>) {
+function mapToLegs(
+  amounts: Map<string, number>,
+  tokenMetadata?: Map<string, TokenMetadata>,
+) {
   return [...amounts.entries()]
     .filter(([, amount]) => Math.abs(amount) > 0.000000001)
     .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
     .map(([mint, amount]) => {
-      const token = lookupToken(mint);
+      const token = lookupToken(mint, tokenMetadata);
 
       return {
         mint,
@@ -231,6 +247,7 @@ function trimAmount(amount: number) {
 function normalizeTrade(
   transaction: EnhancedTransaction,
   wallet: string,
+  tokenMetadata?: Map<string, TokenMetadata>,
 ): TradeSnapshot {
   const sentAmounts = new Map<string, number>();
   const receivedAmounts = new Map<string, number>();
@@ -277,8 +294,8 @@ function normalizeTrade(
     }
   }
 
-  const sent = mapToLegs(sentAmounts);
-  const received = mapToLegs(receivedAmounts);
+  const sent = mapToLegs(sentAmounts, tokenMetadata);
+  const received = mapToLegs(receivedAmounts, tokenMetadata);
 
   return {
     signature: transaction.signature,
@@ -299,15 +316,27 @@ export async function getWalletDashboard(address = DEFAULT_WALLET_ADDRESS) {
     fetchSwapTransactions(address),
   ]);
 
+  const tokenMetadata = new Map<string, TokenMetadata>();
+
   const holdings = balanceResponse.balances
     .map((balance) => {
       const token = lookupToken(balance.mint);
       const usdValue = balance.usdValue ?? null;
+      const canonicalMint = canonicalizeMint(balance.mint);
+      const symbol = balance.symbol ?? token.symbol;
+      const name = balance.name ?? token.name;
+      const logoUri = balance.logoUri ?? token.logoUri;
+
+      tokenMetadata.set(canonicalMint, {
+        symbol,
+        name,
+        logoUri,
+      });
 
       return {
-        mint: canonicalizeMint(balance.mint),
-        symbol: balance.symbol ?? token.symbol,
-        name: balance.name ?? token.name,
+        mint: canonicalMint,
+        symbol,
+        name,
         balance: balance.balance,
         decimals: balance.decimals,
         usdValue,
@@ -316,13 +345,13 @@ export async function getWalletDashboard(address = DEFAULT_WALLET_ADDRESS) {
           balanceResponse.totalUsdValue > 0 && usdValue !== null
             ? usdValue / balanceResponse.totalUsdValue
             : 0,
-        logoUri: balance.logoUri ?? token.logoUri,
+        logoUri,
       };
     })
     .sort((a, b) => (b.usdValue ?? 0) - (a.usdValue ?? 0));
 
   const swaps = swapTransactions
-    .map((transaction) => normalizeTrade(transaction, address))
+    .map((transaction) => normalizeTrade(transaction, address, tokenMetadata))
     .sort((a, b) => b.timestamp - a.timestamp);
 
   const uniqueAssetsTraded = new Set(
