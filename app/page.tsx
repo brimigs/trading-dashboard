@@ -1,28 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
 import { DashboardResponse, TradeLeg, TradeSnapshot } from "@/types/dashboard";
 
-const HOLDING_COLORS = [
-  "#ff4fb6",
-  "#ff77cb",
-  "#ff9ee0",
-  "#ffc6ef",
-  "#ff8ae2",
-  "#ff63a5",
-];
 const ORIGINAL_DEPOSIT_USD = 100;
 
-function formatCurrency(
-  value: number | null,
-  digits = 2,
-  compact = false,
-) {
-  if (value === null) {
-    return "N/A";
-  }
+const PALETTE = [
+  "#16a34a",
+  "#15803d",
+  "#166534",
+  "#14532d",
+  "#22c55e",
+  "#4ade80",
+];
 
+function formatCurrency(value: number | null, digits = 2, compact = false) {
+  if (value === null) return "N/A";
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
@@ -42,13 +35,9 @@ function formatPercent(value: number, digits = 1) {
 }
 
 function formatDateTime(value: string | number | null) {
-  if (!value) {
-    return "Unavailable";
-  }
-
+  if (!value) return "Unavailable";
   const date =
     typeof value === "string" ? new Date(value) : new Date(value * 1000);
-
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
@@ -58,106 +47,63 @@ function formatDateTime(value: string | number | null) {
 }
 
 function formatTimeAgo(timestamp: number | null) {
-  if (!timestamp) {
-    return "No trades";
-  }
-
+  if (!timestamp) return "No trades";
   const diff = Date.now() - timestamp * 1000;
-
-  if (diff < 60_000) {
-    return "Now";
-  }
-
+  if (diff < 60_000) return "Now";
   const steps = [
     { label: "d", value: 86_400_000 },
     { label: "h", value: 3_600_000 },
     { label: "m", value: 60_000 },
   ];
-
   for (const step of steps) {
-    if (diff >= step.value) {
-      return `${Math.floor(diff / step.value)}${step.label} ago`;
-    }
+    if (diff >= step.value) return `${Math.floor(diff / step.value)}${step.label} ago`;
   }
-
   return "Live";
 }
 
 function shortenAddress(value: string) {
-  return `${value.slice(0, 6)}...${value.slice(-6)}`;
-}
-
-function buildSourceBreakdown(data: DashboardResponse | null) {
-  if (!data) {
-    return [];
-  }
-
-  const counts = new Map<string, number>();
-
-  for (const swap of data.swaps) {
-    counts.set(swap.source, (counts.get(swap.source) ?? 0) + 1);
-  }
-
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5);
+  return `${value.slice(0, 8)}···${value.slice(-6)}`;
 }
 
 function buildAllocationGradient(data: DashboardResponse | null) {
   const holdings = data?.holdings.slice(0, 6) ?? [];
-
-  if (holdings.length === 0) {
-    return "conic-gradient(#ff4fb6 0% 100%)";
-  }
-
-  return `conic-gradient(${holdings
-    .map((holding, index, list) => {
-      const start =
-        list.slice(0, index).reduce((sum, item) => sum + item.allocation, 0) * 100;
-      const end = start + holding.allocation * 100;
-
-      return `${HOLDING_COLORS[index % HOLDING_COLORS.length]} ${start}% ${end}%`;
-    })
-    .join(", ")})`;
+  if (holdings.length === 0) return `conic-gradient(#16a34a 0% 100%)`;
+  let cum = 0;
+  const stops = holdings.map((h, i) => {
+    const start = cum;
+    cum += h.allocation * 100;
+    return `${PALETTE[i % PALETTE.length]} ${start}% ${cum}%`;
+  });
+  return `conic-gradient(${stops.join(", ")})`;
 }
 
 function buildPnlSeries(
   swaps: TradeSnapshot[],
   totalPortfolioUsd: number,
   initialDepositUsd: number,
-): Array<{ label: string; value: number; normalized: number }> {
-  const recent = swaps.slice(0, 8).toReversed();
+): Array<{ value: number; normalized: number }> {
+  const pointCount = 8;
   const currentValue = totalPortfolioUsd || 0;
   const startValue = initialDepositUsd;
-  const pointCount = 8;
 
   if (currentValue === 0) {
-    return Array.from({ length: pointCount }, (_, index) => ({
-      label: index === 0 ? "Start" : index === pointCount - 1 ? "Now" : "",
-      value: startValue,
-      normalized: 0.5,
-    }));
+    return Array.from({ length: pointCount }, () => ({ value: startValue, normalized: 0.5 }));
   }
 
-  const values: number[] = Array.from({ length: pointCount }, (_, index) => {
-    const progress = index / (pointCount - 1);
-
+  const values: number[] = Array.from({ length: pointCount }, (_, i) => {
+    const progress = i / (pointCount - 1);
     return startValue + (currentValue - startValue) * progress;
   });
 
-  recent.forEach((swap, index) => {
-    if (index >= pointCount - 2) {
-      return;
-    }
-
+  swaps.slice(0, 6).toReversed().forEach((swap, i) => {
+    if (i >= pointCount - 2) return;
     const flowWeight =
       swap.received.reduce((sum, leg) => sum + leg.amount, 0) -
       swap.sent.reduce((sum, leg) => sum + leg.amount, 0);
     const variance =
       flowWeight * Math.max(currentValue * 0.0004, 0.5) -
       swap.feeSol * currentValue * 0.02;
-
-    values[index + 1] = Math.max(values[index + 1] + variance, startValue * 0.8);
+    values[i + 1] = Math.max(values[i + 1] + variance, startValue * 0.8);
   });
 
   values[0] = startValue;
@@ -167,103 +113,47 @@ function buildPnlSeries(
   const max = Math.max(...values);
   const spread = max - min || 1;
 
-  return values.map((value, index) => ({
-    label: index === 0 ? "Start" : index === pointCount - 1 ? "Now" : "",
+  return values.map((value) => ({
     value,
     normalized: (value - min) / spread,
   }));
 }
 
-function buildChartPath(points: Array<{ normalized?: number }>, height: number) {
-  if (points.length === 0) {
-    return "";
-  }
-
+function buildChartPath(points: Array<{ normalized: number }>, height: number) {
+  if (!points.length) return "";
   return points
-    .map((point, index) => {
-      const x =
-        points.length === 1 ? 0 : (index / (points.length - 1)) * 100;
-      const y = height - (point.normalized ?? 0.5) * height;
-
-      return `${index === 0 ? "M" : "L"} ${x} ${y}`;
+    .map((p, i) => {
+      const x = points.length === 1 ? 0 : (i / (points.length - 1)) * 100;
+      const y = height - p.normalized * (height - 8) - 4;
+      return `${i === 0 ? "M" : "L"} ${x} ${y}`;
     })
     .join(" ");
 }
 
-function AssetAvatar({
-  symbol,
-  logoUri,
-  size = "md",
-}: {
-  symbol: string;
-  logoUri: string | null;
-  size?: "sm" | "md" | "lg";
-}) {
+function TradeLegPills({ legs, tone }: { legs: TradeLeg[]; tone: "sent" | "received" }) {
+  if (!legs.length) return null;
   return (
-    <div className={`asset-avatar asset-avatar-${size}`}>
-      {logoUri ? (
-        <img alt={symbol} className="asset-avatar-image" src={logoUri} />
-      ) : (
-        <span>{symbol.slice(0, 1)}</span>
-      )}
-    </div>
-  );
-}
-
-function StatOrb({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="stat-orb">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function TradeLegPills({
-  title,
-  legs,
-  tone,
-}: {
-  title: string;
-  legs: TradeLeg[];
-  tone: "sent" | "received";
-}) {
-  return (
-    <div className={`trade-side trade-side-${tone}`}>
-      <span className="mini-label">{title}</span>
-      <div className="trade-side-pills">
-        {legs.length === 0 ? (
-          <span className="pill pill-empty">None</span>
-        ) : (
-          legs.map((leg) => (
-            <div className="pill" key={`${tone}-${leg.mint}`}>
-              <strong>{formatNumber(leg.amount)}</strong>
-              <span>{leg.symbol}</span>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
+    <>
+      {legs.map((leg) => (
+        <span
+          className={`leg-pill leg-pill-${tone}`}
+          key={`${tone}-${leg.mint}`}
+        >
+          {tone === "sent" ? "−" : "+"}{formatNumber(leg.amount)} {leg.symbol}
+        </span>
+      ))}
+    </>
   );
 }
 
 function LoadingState() {
   return (
-    <section className="panel loading-panel" aria-live="polite">
+    <div className="loading-panel">
       <div className="loading-hero" />
-      <div className="loading-grid">
-        <div className="loading-card" />
-        <div className="loading-card" />
-        <div className="loading-card" />
-        <div className="loading-card" />
-      </div>
-    </section>
+      {Array.from({ length: 6 }, (_, i) => (
+        <div className="loading-row" key={i} />
+      ))}
+    </div>
   );
 }
 
@@ -287,11 +177,7 @@ export default function Page() {
       try {
         const response = await fetch("/api/wallet", { cache: "no-store" });
         const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload.error ?? "Failed to load dashboard");
-        }
-
+        if (!response.ok) throw new Error(payload.error ?? "Failed to load dashboard");
         if (!cancelled) {
           setData(payload as DashboardResponse);
           setError(null);
@@ -299,9 +185,7 @@ export default function Page() {
       } catch (caughtError) {
         if (!cancelled) {
           setError(
-            caughtError instanceof Error
-              ? caughtError.message
-              : "Failed to load dashboard",
+            caughtError instanceof Error ? caughtError.message : "Failed to load dashboard",
           );
         }
       } finally {
@@ -313,63 +197,42 @@ export default function Page() {
     }
 
     void load(refreshKey === 0 && data === null);
-    const interval = window.setInterval(() => {
-      void load(false);
-    }, 60_000);
-
+    const interval = window.setInterval(() => void load(false), 60_000);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
     };
   }, [refreshKey]);
 
-  const wallet =
-    data?.wallet ?? "jTsP9QPb7b8XKhiexDCoA9DadkocsvFxgaabBCWxCZu";
-  const assetGallery = data?.holdings.slice(0, 8) ?? [];
+  const wallet = data?.wallet ?? "jTsP9QPb7b8XKhiexDCoA9DadkocsvFxgaabBCWxCZu";
+  const holdings = data?.holdings.slice(0, 8) ?? [];
   const recentSwaps = data?.swaps.slice(0, 8) ?? [];
   const allocationGradient = buildAllocationGradient(data);
   const dominantHolding = data?.holdings[0];
   const pnlSeries = data
-    ? buildPnlSeries(
-        recentSwaps,
-        data.stats.totalPortfolioUsd,
-        ORIGINAL_DEPOSIT_USD,
-      )
+    ? buildPnlSeries(recentSwaps, data.stats.totalPortfolioUsd, ORIGINAL_DEPOSIT_USD)
     : [];
-  const pnlPath = buildChartPath(pnlSeries, 100);
-  const pnlAreaPath = pnlPath
-    ? `${pnlPath} L 100 100 L 0 100 Z`
-    : "";
-  const pnlDelta = data
-    ? data.stats.totalPortfolioUsd - ORIGINAL_DEPOSIT_USD
-    : 0;
-  const pnlPercent = ORIGINAL_DEPOSIT_USD
-    ? pnlDelta / ORIGINAL_DEPOSIT_USD
-    : 0;
+  const pnlPath = buildChartPath(pnlSeries, 56);
+  const pnlAreaPath = pnlPath ? `${pnlPath} L 100 56 L 0 56 Z` : "";
+  const pnlDelta = data ? data.stats.totalPortfolioUsd - ORIGINAL_DEPOSIT_USD : 0;
+  const pnlPercent = ORIGINAL_DEPOSIT_USD ? pnlDelta / ORIGINAL_DEPOSIT_USD : 0;
 
   return (
     <main className="page-shell">
-      <div className="glow glow-left" aria-hidden="true" />
-      <div className="glow glow-right" aria-hidden="true" />
-      <div className="grid-overlay" aria-hidden="true" />
-
+      {/* Topbar */}
       <header className="topbar">
-        <div>
-          <span className="eyebrow">Bella Bot's Trades</span>
-          <h1>Wallet Tracker</h1>
+        <div className="topbar-brand">
+          <span className="topbar-eyebrow">Bella Bot</span>
+          <span className="topbar-title">$ wallet-tracker</span>
         </div>
-
         <div className="topbar-actions">
-          <div className="wallet-pill">
-            <span>Wallet</span>
-            <strong>{shortenAddress(wallet)}</strong>
-          </div>
+          <span className="wallet-tag">{shortenAddress(wallet)}</span>
           <button
             className="refresh-button"
-            onClick={() => setRefreshKey((value) => value + 1)}
+            onClick={() => setRefreshKey((v) => v + 1)}
             type="button"
           >
-            {isRefreshing ? "Refreshing..." : "Refresh"}
+            {isRefreshing ? "[loading…]" : "[r]efresh"}
           </button>
         </div>
       </header>
@@ -377,191 +240,181 @@ export default function Page() {
       {isLoading ? (
         <LoadingState />
       ) : error ? (
-        <section className="panel error-panel">
-          <span className="eyebrow">Feed error</span>
-          <h2>Couldn’t load data.</h2>
-          <p>{error}</p>
-        </section>
+        <div className="error-panel">
+          <div className="error-label">Feed error</div>
+          <h2 className="error-title">Couldn't load data.</h2>
+          <p className="error-body">{error}</p>
+        </div>
       ) : data ? (
         <>
-          <section className="hero-grid">
-            <article className="panel hero-panel">
-              <div className="hero-top">
-                <div className="hero-copy">
-                  <span className="eyebrow">Live mode</span>
-                  <h2>{formatCurrency(data.stats.totalPortfolioUsd, 1, true)}</h2>
-                  <div className="hero-chip-row">
-                    <StatOrb label="Assets" value={String(data.stats.holdingsCount)} />
-                    <StatOrb label="Swaps" value={String(data.stats.swapCount)} />
-                    <StatOrb
-                      label="Last"
-                      value={formatTimeAgo(data.stats.lastTradeAt)}
-                    />
-                  </div>
+          {/* Hero */}
+          <div className="hero-grid">
+            <div>
+              <div className="hero-value-label">Portfolio Value</div>
+              <div className="hero-value">
+                {formatCurrency(data.stats.totalPortfolioUsd, 2)}
+              </div>
+              <div className="hero-pnl-row">
+                <span className="hero-pnl-value">
+                  {pnlDelta >= 0 ? "↑" : "↓"} {formatCurrency(Math.abs(pnlDelta), 2)}
+                </span>
+                <span className="hero-pnl-meta">
+                  {pnlPercent >= 0 ? "+" : ""}{formatPercent(pnlPercent)} from {formatCurrency(ORIGINAL_DEPOSIT_USD, 0)}
+                </span>
+              </div>
+              <div className="stat-row">
+                <div className="stat-item">
+                  <span className="stat-label">Assets</span>
+                  <span className="stat-value">{data.stats.holdingsCount}</span>
                 </div>
+                <div className="stat-item">
+                  <span className="stat-label">Swaps</span>
+                  <span className="stat-value">{data.stats.swapCount}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Last Trade</span>
+                  <span className="stat-value">{formatTimeAgo(data.stats.lastTradeAt)}</span>
+                </div>
+              </div>
+            </div>
 
-                <div className="hero-donut-wrap">
-                  <div
-                    className="hero-donut"
-                    style={{ background: allocationGradient }}
-                  >
-                    <div className="hero-donut-core">
-                      <span>Lead</span>
-                      <strong>{dominantHolding?.symbol ?? "N/A"}</strong>
-                      <small>
-                        {dominantHolding
-                          ? formatPercent(dominantHolding.allocation)
-                          : "0.0%"}
-                      </small>
-                    </div>
+            {/* Donut */}
+            <div className="donut-wrap">
+              <div className="donut-frame">
+                <div
+                  className="donut"
+                  style={{ background: allocationGradient }}
+                >
+                  <div className="donut-core">
+                    <span className="donut-core-lead">Lead</span>
+                    <strong className="donut-core-symbol">
+                      {dominantHolding?.symbol ?? "N/A"}
+                    </strong>
+                    <span className="donut-core-pct">
+                      {dominantHolding ? formatPercent(dominantHolding.allocation) : "0%"}
+                    </span>
                   </div>
                 </div>
               </div>
-
-              <div className="pnl-card">
-                <div className="pnl-head">
-                  <span className="eyebrow">PnL</span>
-                  <strong>{formatCurrency(pnlDelta, 0, true)}</strong>
-                </div>
-                <div className="pnl-meta">
-                  <span>Start {formatCurrency(ORIGINAL_DEPOSIT_USD, 0)}</span>
-                  <span>Now {formatCurrency(data.stats.totalPortfolioUsd, 0, true)}</span>
-                  <span>{formatPercent(pnlPercent)}</span>
-                </div>
-                <div className="pnl-chart">
-                  <svg
-                    aria-hidden="true"
-                    className="pnl-svg"
-                    preserveAspectRatio="none"
-                    viewBox="0 0 100 100"
-                  >
-                    <defs>
-                      <linearGradient id="pnlFill" x1="0" x2="0" y1="0" y2="1">
-                        <stop offset="0%" stopColor="rgba(255, 79, 182, 0.42)" />
-                        <stop offset="100%" stopColor="rgba(255, 79, 182, 0)" />
-                      </linearGradient>
-                    </defs>
-                    <path className="pnl-area" d={pnlAreaPath} fill="url(#pnlFill)" />
-                    <path className="pnl-line" d={pnlPath} pathLength="100" />
-                  </svg>
-                  <div className="pnl-points">
-                    {pnlSeries.map((point, index) => (
-                      <span
-                        className="pnl-point"
-                        key={`pnl-point-${point.label || "mid"}-${index}`}
-                        style={{
-                          left: `${pnlSeries.length === 1 ? 0 : (index / (pnlSeries.length - 1)) * 100}%`,
-                          top: `${100 - (point.normalized ?? 0.5) * 100}%`,
-                          background:
-                            HOLDING_COLORS[index % HOLDING_COLORS.length],
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-                <div className="pnl-axis">
-                  {pnlSeries.map((point, index) => (
-                    <span key={`pnl-axis-${point.label || "mid"}-${index}`}>
-                      {point.label}
+              <div className="donut-legend">
+                {holdings.slice(0, 4).map((h, i) => (
+                  <div className="donut-legend-row" key={h.mint}>
+                    <div
+                      className="donut-legend-dot"
+                      style={{ background: PALETTE[i % PALETTE.length] }}
+                    />
+                    <span className="donut-legend-symbol">{h.symbol}</span>
+                    <span className="donut-legend-pct">
+                      {formatPercent(h.allocation, 0)}
                     </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* PnL Chart */}
+          <div className="pnl-panel">
+            <div className="panel-header">
+              <span className="panel-title">pnl_chart</span>
+              <span style={{ fontSize: "11px", color: pnlPercent >= 0 ? "#22c55e" : "#f87171" }}>
+                {pnlPercent >= 0 ? "+" : ""}{formatPercent(pnlPercent)}
+              </span>
+            </div>
+            <div className="pnl-body">
+              <svg
+                aria-hidden="true"
+                className="pnl-svg"
+                height="56"
+                preserveAspectRatio="none"
+                viewBox="0 0 100 56"
+              >
+                <defs>
+                  <linearGradient id="pnlFill" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%" stopColor="rgba(34,197,94,0.18)" />
+                    <stop offset="100%" stopColor="rgba(34,197,94,0)" />
+                  </linearGradient>
+                </defs>
+                <path d={pnlAreaPath} fill="url(#pnlFill)" />
+                <path className="pnl-line" d={pnlPath} />
+              </svg>
+            </div>
+            <div className="pnl-footer">
+              <span className="pnl-footer-start">
+                start: {formatCurrency(ORIGINAL_DEPOSIT_USD, 0)}
+              </span>
+              <span className="pnl-footer-end">
+                now: {formatCurrency(data.stats.totalPortfolioUsd, 0, true)}
+              </span>
+            </div>
+          </div>
+
+          {/* Holdings */}
+          <div className="panel">
+            <div className="panel-header">
+              <span className="panel-title">holdings</span>
+              <span className="panel-count">{holdings.length} assets</span>
+            </div>
+            <div className="table-header holdings-header table-row">
+              <span>SYM</span>
+              <span>NAME</span>
+              <span style={{ textAlign: "right" }}>VALUE</span>
+              <span style={{ textAlign: "right" }}>ALLOC</span>
+              <span>WEIGHT</span>
+            </div>
+            {holdings.map((h, i) => (
+              <div className="table-row holdings-row" key={h.mint}>
+                <span className="holding-symbol">{h.symbol}</span>
+                <span className="holding-name">{h.name}</span>
+                <span className="holding-value">
+                  {formatCurrency(h.usdValue, 0, true)}
+                </span>
+                <span className="holding-alloc">
+                  {formatPercent(h.allocation, 1)}
+                </span>
+                <div className="holding-bar-track" aria-hidden="true">
+                  {Array.from({ length: 20 }, (_, j) => (
+                    <div
+                      className="holding-bar-block"
+                      key={j}
+                      style={{
+                        background:
+                          j < Math.round(h.allocation * 20)
+                            ? PALETTE[i % PALETTE.length]
+                            : "#0e1e11",
+                      }}
+                    />
                   ))}
                 </div>
               </div>
-            </article>
-          </section>
+            ))}
+          </div>
 
-          <section className="gallery-section">
-            <div className="section-head">
-              <span className="eyebrow">Assets</span>
+          {/* Trades */}
+          <div className="panel">
+            <div className="panel-header">
+              <span className="panel-title">recent_swaps</span>
             </div>
-
-            <div className="asset-gallery">
-              {assetGallery.map((holding, index) => (
-                <article className="asset-card" key={holding.mint}>
-                  <div
-                    className="asset-card-glow"
-                    style={{
-                      background:
-                        HOLDING_COLORS[index % HOLDING_COLORS.length],
-                    }}
-                  />
-                  <div className="asset-card-top">
-                    <AssetAvatar
-                      logoUri={holding.logoUri}
-                      size="lg"
-                      symbol={holding.symbol}
-                    />
-                    <div className="asset-card-meta">
-                      <strong>{holding.symbol}</strong>
-                      <span>{holding.name}</span>
+            {recentSwaps.length === 0 ? (
+              <div className="empty-state">No swaps recorded.</div>
+            ) : (
+              recentSwaps.map((swap) => (
+                <div className="trade-row" key={swap.signature}>
+                  <div>
+                    <div className="trade-summary">{swap.summary}</div>
+                    <div className="trade-legs">
+                      <TradeLegPills legs={swap.sent} tone="sent" />
+                      <TradeLegPills legs={swap.received} tone="received" />
                     </div>
                   </div>
-
-                  <strong className="asset-card-value">
-                    {formatCurrency(holding.usdValue, 0, true)}
-                  </strong>
-
-                  <div className="asset-card-bar" aria-hidden="true">
-                    <div
-                      className="asset-card-bar-fill"
-                      style={{
-                        width: `${Math.max(holding.allocation * 100, 6)}%`,
-                        background:
-                          HOLDING_COLORS[index % HOLDING_COLORS.length],
-                      }}
-                    />
-                  </div>
-
-                  <div className="asset-card-footer">
-                    <span>{formatNumber(holding.balance)}</span>
-                    <strong>{formatPercent(holding.allocation)}</strong>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel trade-panel">
-            <div className="section-head">
-              <span className="eyebrow">Recent swaps</span>
-            </div>
-
-            <div className="trade-grid">
-              {recentSwaps.length === 0 ? (
-                <div className="empty-state">No swaps.</div>
-              ) : (
-                recentSwaps.map((swap) => (
-                  <article className="trade-card" key={swap.signature}>
-                    <div className="trade-card-top">
-                      <div className="trade-card-meta">
-                        <span className="source-tag">{swap.source}</span>
-                        <strong>{formatDateTime(swap.timestamp)}</strong>
-                      </div>
-                      <a
-                        className="sig-tag"
-                        href={swap.explorerUrl}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        Transaction details
-                      </a>
-                    </div>
-
-                    <h4>{swap.summary}</h4>
-
-                    <div className="trade-flow-grid">
-                      <TradeLegPills legs={swap.sent} title="Out" tone="sent" />
-                      <TradeLegPills
-                        legs={swap.received}
-                        title="In"
-                        tone="received"
-                      />
-                    </div>
-                  </article>
-                ))
-              )}
-            </div>
-          </section>
+                  <span className="trade-source">[{swap.source}]</span>
+                  <span className="trade-time">
+                    {formatTimeAgo(swap.timestamp)}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
         </>
       ) : null}
     </main>
